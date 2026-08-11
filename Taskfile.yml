@@ -1,0 +1,29 @@
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+
+version: "3"
+
+tasks:
+  fmt:
+    cmd: go fmt ./...
+  fmt:check:
+    cmds:
+      - task: fmt
+      - git diff --exit-code
+  lint:
+    cmd: golangci-lint run
+  vet:
+    cmd: go vet ./...
+  build:
+    cmd: go build -o bin/go-template ./cmd/gotemplate
+  test:
+    cmd: go test ./...
+  ci:
+    cmds:
+      - task: fmt:check
+      - task: vet
+      - task: lint
+      - task: test
+  snapshot:
+    cmd: goreleaser release --snapshot --clean
+  release:
+    cmd: goreleaser release --clean
