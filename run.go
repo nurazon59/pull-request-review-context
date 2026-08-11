@@ -14,7 +14,7 @@ import (
 	"github.com/nurazon59/pull-request-review-context/internal/output"
 )
 
-const appVersion = "v0.1.0"
+const appVersion = "v0.2.0"
 
 type Options struct {
 	Repository  string
@@ -30,6 +30,10 @@ var CLI struct {
 }
 
 func Run() error {
+	if len(os.Args) > 1 && os.Args[1] == "skills" {
+		return runSkills(context.Background(), os.Args[2:], os.Stdout, os.Stderr)
+	}
+
 	kong.Parse(&CLI, kong.Name("pull-request-review-context"), kong.Vars{
 		"version": appVersion,
 	})

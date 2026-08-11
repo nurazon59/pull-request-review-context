@@ -44,6 +44,35 @@ go run ./cmd/pull-request-review-context --format json 123
 
 ファイル単位のコメントや対象行を持たないコメントは、コード行を抽出できないため出力しません。
 
+## Codex skill
+
+このCLIには、レビューコンテキストを取得するskillが埋め込まれています。
+配置先を確認するだけなら、次を実行します。
+
+```bash
+go run ./cmd/pull-request-review-context skills install
+```
+
+実際にCodexのskillとして配置する場合は、`--apply`を明示します。
+
+```bash
+go run ./cmd/pull-request-review-context skills install --apply
+```
+
+既定の配置先は、`CODEX_HOME`が設定されていれば`$CODEX_HOME/skills`、未設定なら`~/.codex/skills`です。
+配置先を変える場合は`--prefix`を指定してください。
+
+```bash
+go run ./cmd/pull-request-review-context skills install --prefix /path/to/skills --apply
+```
+
+更新状況の確認や更新もできます。
+
+```bash
+go run ./cmd/pull-request-review-context skills status
+go run ./cmd/pull-request-review-context skills update --apply
+```
+
 実在するOSSのレビューコメントを使う統合テストも用意しています。`gh auth login` 済みの環境で実行してください。
 
 ```bash

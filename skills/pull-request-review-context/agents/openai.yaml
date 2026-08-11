@@ -1,0 +1,4 @@
+interface:
+  display_name: "Pull Request Review Context"
+  short_description: "Extract review comments and target code lines"
+  default_prompt: "Use $pull-request-review-context to extract concise review context from a pull request."
