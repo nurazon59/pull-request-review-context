@@ -31,11 +31,17 @@ func LLM(writer io.Writer, items []Item) error {
 				return err
 			}
 		}
-		line := fmt.Sprintf("%s:%d", item.Path, item.Target.StartLine)
+		if _, err := fmt.Fprintln(writer, "file: "+item.Path); err != nil {
+			return err
+		}
+		line := fmt.Sprintf("line: %d", item.Target.StartLine)
 		if item.Target.StartLine != item.Target.EndLine {
 			line = fmt.Sprintf("%s-%d", line, item.Target.EndLine)
 		}
 		if _, err := fmt.Fprintln(writer, line); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintln(writer, "\ncode:"); err != nil {
 			return err
 		}
 		for _, codeLine := range item.Target.Lines {
@@ -43,13 +49,26 @@ func LLM(writer io.Writer, items []Item) error {
 				return err
 			}
 		}
+		if _, err := fmt.Fprintln(writer); err != nil {
+			return err
+		}
+		reviewCount := 0
 		for _, review := range item.Reviews {
 			if strings.TrimSpace(review) == "" {
 				continue
 			}
-			if _, err := fmt.Fprintln(writer, "review: "+review); err != nil {
+			if reviewCount > 0 {
+				if _, err := fmt.Fprintln(writer); err != nil {
+					return err
+				}
+			}
+			if _, err := fmt.Fprintln(writer, "review:"); err != nil {
 				return err
 			}
+			if _, err := fmt.Fprintln(writer, review); err != nil {
+				return err
+			}
+			reviewCount++
 		}
 	}
 	return nil

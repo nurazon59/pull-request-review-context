@@ -22,7 +22,7 @@ func TestLLM(t *testing.T) {
 	if err := LLM(&buffer, items); err != nil {
 		t.Fatalf("LLM() error = %v", err)
 	}
-	want := "main.go:12-13\nfirst\nsecond\nreview: 改善してください\n"
+	want := "file: main.go\nline: 12-13\n\ncode:\nfirst\nsecond\n\nreview:\n改善してください\n"
 	if buffer.String() != want {
 		t.Fatalf("LLM() = %q, want %q", buffer.String(), want)
 	}

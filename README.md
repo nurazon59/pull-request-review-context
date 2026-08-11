@@ -26,9 +26,14 @@ go run ./cmd/pull-request-review-context --repository OWNER/REPOSITORY 123
 標準出力は、ファイル名・行番号・対象コード行・レビュー本文だけです。
 
 ```text
-internal/example.go:42
+file: internal/example.go
+line: 42
+
+code:
 return value, nil
-review: エラー処理を追加してください
+
+review:
+エラー処理を追加してください
 ```
 
 機械処理用にはJSONを指定できます。

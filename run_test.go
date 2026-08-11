@@ -22,7 +22,7 @@ func TestExecute(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
-	want := "main.go:11\nnew\nreview: 修正してください\nreview: 別の指摘です\n"
+	want := "file: main.go\nline: 11\n\ncode:\nnew\n\nreview:\n修正してください\n\nreview:\n別の指摘です\n"
 	if buffer.String() != want {
 		t.Fatalf("Execute() = %q, want %q", buffer.String(), want)
 	}
