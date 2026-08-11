@@ -14,8 +14,8 @@ before:
     - task lint
 
 builds:
-  - main: ./cmd/gotemplate
-    binary: go-template
+  - main: ./cmd/pull-request-review-context
+    binary: pull-request-review-context
     env:
       # Keep the binary portable.
       - CGO_ENABLED=0

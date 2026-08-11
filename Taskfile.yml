@@ -14,7 +14,7 @@ tasks:
   vet:
     cmd: go vet ./...
   build:
-    cmd: go build -o bin/go-template ./cmd/gotemplate
+    cmd: go build -o bin/pull-request-review-context ./cmd/pull-request-review-context
   test:
     cmd: go test ./...
   ci:

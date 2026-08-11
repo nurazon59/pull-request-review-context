@@ -1,10 +1,10 @@
 apiVersion: gh-infra/v1
 kind: Repository
 metadata:
-  name: go-template
+  name: pull-request-review-context
   owner: nurazon59
 spec:
-  description: ""
+  description: "Extract pull request review comments and target code lines for LLM context."
   visibility: public
   archived: false
   labels:
