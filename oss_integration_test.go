@@ -12,19 +12,22 @@ import (
 )
 
 func TestKubernetesPullRequestReviewComments(t *testing.T) {
-	comments, err := gh.NewClient().ListReviewComments(context.Background(), "kubernetes/kubernetes", 138132)
+	threads, err := gh.NewClient().ListReviewThreads(context.Background(), "kubernetes/kubernetes", 138132)
 	if err != nil {
-		t.Fatalf("ListReviewComments() error = %v", err)
+		t.Fatalf("ListReviewThreads() error = %v", err)
 	}
-	if len(comments) < 40 {
-		t.Fatalf("review comments = %d, want at least 40", len(comments))
-	}
-
+	commentCount := 0
 	lineComments := 0
-	for _, comment := range comments {
-		if comment.Line != nil {
-			lineComments++
+	for _, thread := range threads {
+		for _, comment := range thread.Comments.Nodes {
+			commentCount++
+			if comment.Line != nil || comment.OriginalLine != nil {
+				lineComments++
+			}
 		}
+	}
+	if commentCount < 40 {
+		t.Fatalf("review comments = %d, want at least 40", commentCount)
 	}
 	if lineComments < 10 {
 		t.Fatalf("line-targeted review comments = %d, want at least 10", lineComments)
@@ -35,6 +38,7 @@ func TestKubernetesPullRequestReviewComments(t *testing.T) {
 		Repository:  "kubernetes/kubernetes",
 		Format:      "json",
 		PullRequest: 138132,
+		All:         true,
 	})
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)

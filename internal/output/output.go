@@ -10,18 +10,31 @@ import (
 )
 
 type Item struct {
-	Path    string
-	Reviews []string
-	Target  diff.Target
+	Path     string
+	Reviews  []string
+	Comments []ReviewComment
+	Target   diff.Target
+}
+
+type ReviewComment struct {
+	ID       int64  `json:"id"`
+	ThreadID string `json:"thread_id"`
+	URL      string `json:"url"`
+	Path     string `json:"path"`
+	Line     int    `json:"line"`
+	Body     string `json:"body"`
+	Resolved bool   `json:"resolved"`
+	Outdated bool   `json:"outdated"`
 }
 
 type jsonItem struct {
-	Path      string   `json:"path"`
-	StartLine int      `json:"start_line"`
-	EndLine   int      `json:"end_line"`
-	Side      string   `json:"side"`
-	Code      []string `json:"code"`
-	Reviews   []string `json:"reviews"`
+	Path      string          `json:"path"`
+	StartLine int             `json:"start_line"`
+	EndLine   int             `json:"end_line"`
+	Side      string          `json:"side"`
+	Code      []string        `json:"code"`
+	Reviews   []string        `json:"reviews"`
+	Comments  []ReviewComment `json:"comments,omitempty"`
 }
 
 func LLM(writer io.Writer, items []Item) error {
@@ -53,13 +66,28 @@ func LLM(writer io.Writer, items []Item) error {
 			return err
 		}
 		reviewCount := 0
-		for _, review := range item.Reviews {
+		for reviewIndex, review := range item.Reviews {
 			if strings.TrimSpace(review) == "" {
 				continue
 			}
 			if reviewCount > 0 {
 				if _, err := fmt.Fprintln(writer); err != nil {
 					return err
+				}
+			}
+			if reviewIndex < len(item.Comments) {
+				comment := item.Comments[reviewIndex]
+				states := make([]string, 0, 2)
+				if comment.Resolved {
+					states = append(states, "resolved")
+				}
+				if comment.Outdated {
+					states = append(states, "outdated")
+				}
+				if len(states) > 0 {
+					if _, err := fmt.Fprintf(writer, "review status: %s\n", strings.Join(states, ", ")); err != nil {
+						return err
+					}
 				}
 			}
 			if _, err := fmt.Fprintln(writer, "review:"); err != nil {
@@ -84,6 +112,7 @@ func JSON(writer io.Writer, items []Item) error {
 			Side:      item.Target.Side,
 			Code:      item.Target.Lines,
 			Reviews:   item.Reviews,
+			Comments:  item.Comments,
 		})
 	}
 	encoder := json.NewEncoder(writer)
