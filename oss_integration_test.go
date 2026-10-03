@@ -12,22 +12,18 @@ import (
 )
 
 func TestKubernetesPullRequestReviewComments(t *testing.T) {
-	threads, err := gh.NewClient().ListReviewThreads(context.Background(), "kubernetes/kubernetes", 138132)
+	comments, err := gh.NewClient().ListReviewComments(context.Background(), "kubernetes/kubernetes", 138132)
 	if err != nil {
-		t.Fatalf("ListReviewThreads() error = %v", err)
+		t.Fatalf("ListReviewComments() error = %v", err)
 	}
-	commentCount := 0
 	lineComments := 0
-	for _, thread := range threads {
-		for _, comment := range thread.Comments.Nodes {
-			commentCount++
-			if comment.Line != nil || comment.OriginalLine != nil {
-				lineComments++
-			}
+	for _, comment := range comments {
+		if comment.Line != nil {
+			lineComments++
 		}
 	}
-	if commentCount < 40 {
-		t.Fatalf("review comments = %d, want at least 40", commentCount)
+	if len(comments) < 40 {
+		t.Fatalf("review comments = %d, want at least 40", len(comments))
 	}
 	if lineComments < 10 {
 		t.Fatalf("line-targeted review comments = %d, want at least 10", lineComments)

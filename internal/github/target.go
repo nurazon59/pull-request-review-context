@@ -10,12 +10,10 @@ import (
 
 var reviewCommentAnchor = regexp.MustCompile(`^(?:discussion_r|discussion-|discussion-diff-)([0-9]+)$`)
 
-// Target identifies a pull request, optionally narrowed to one inline review comment.
 type Target struct {
-	Repository    string
-	PullRequest   int
-	CommentID     int64
-	CommentAPIURL bool
+	Repository  string
+	PullRequest int
+	CommentID   int64
 }
 
 func ParseTarget(value string) (Target, error) {
@@ -25,85 +23,41 @@ func ParseTarget(value string) (Target, error) {
 		}
 		return Target{PullRequest: number}, nil
 	}
-	parsed, err := url.Parse(value)
-	if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.Host == "" {
-		return Target{}, fmt.Errorf("target must be a pull request number or GitHub pull request/comment URL: %q", value)
+	u, err := url.Parse(value)
+	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.User != nil || (u.Host != "github.com" && u.Host != "api.github.com") {
+		return Target{}, fmt.Errorf("target must be a PR number or github.com/api.github.com PR or review comment URL: %q", value)
 	}
-	if parsed.User != nil || (!strings.EqualFold(parsed.Host, "github.com") && !strings.EqualFold(parsed.Host, "api.github.com")) {
-		return Target{}, fmt.Errorf("target URL must use github.com or api.github.com: %q", value)
-	}
-	parts := splitPath(parsed.Path)
-	apiParts := stripAPIPrefix(parts)
-	if len(apiParts) == 5 && apiParts[0] == "repos" && apiParts[3] == "pulls" {
-		repository := apiParts[1] + "/" + apiParts[2]
-		if err := ValidateRepository(repository); err != nil {
-			return Target{}, err
-		}
-		pullRequest, err := strconv.Atoi(apiParts[4])
-		if err != nil || pullRequest < 1 {
-			return Target{}, fmt.Errorf("URL contains an invalid pull request number: %q", value)
-		}
-		return Target{Repository: repository, PullRequest: pullRequest}, nil
-	}
-	if repository, commentID, ok := parseReviewCommentAPIPath(apiParts); ok {
-		return Target{Repository: repository, CommentID: commentID, CommentAPIURL: true}, nil
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	if u.Host == "api.github.com" && len(parts) > 0 && parts[0] == "repos" {
+		parts = parts[1:]
 	}
 	if len(parts) < 4 || (parts[2] != "pull" && parts[2] != "pulls") {
 		return Target{}, fmt.Errorf("URL must identify a pull request or inline review comment: %q", value)
 	}
-	repository := parts[0] + "/" + parts[1]
-	if err := ValidateRepository(repository); err != nil {
+	target := Target{Repository: parts[0] + "/" + parts[1]}
+	if err := ValidateRepository(target.Repository); err != nil {
 		return Target{}, err
 	}
-	pullRequest, err := strconv.Atoi(parts[3])
-	if err != nil || pullRequest < 1 {
-		return Target{}, fmt.Errorf("URL contains an invalid pull request number: %q", value)
+	if u.Host == "api.github.com" && len(parts) == 5 && parts[3] == "comments" {
+		target.CommentID, err = strconv.ParseInt(parts[4], 10, 64)
+		if err != nil || target.CommentID < 1 {
+			return Target{}, fmt.Errorf("invalid review comment ID in %q", value)
+		}
+		return target, nil
 	}
-	result := Target{Repository: repository, PullRequest: pullRequest}
-	if parsed.Fragment == "" {
-		return result, nil
+	target.PullRequest, err = strconv.Atoi(parts[3])
+	if err != nil || target.PullRequest < 1 {
+		return Target{}, fmt.Errorf("invalid pull request number in %q", value)
 	}
-	anchor := reviewCommentAnchor.FindStringSubmatch(parsed.Fragment)
-	if anchor == nil {
-		return Target{}, fmt.Errorf("URL fragment must identify a review comment (for example #discussion_r123): %q", value)
-	}
-	commentID, err := strconv.ParseInt(anchor[1], 10, 64)
-	if err != nil || commentID < 1 {
-		return Target{}, fmt.Errorf("URL contains an invalid review comment ID: %q", value)
-	}
-	result.CommentID = commentID
-	return result, nil
-}
-
-func parseReviewCommentAPIPath(parts []string) (string, int64, bool) {
-	if len(parts) != 6 || parts[0] != "repos" || parts[3] != "pulls" || parts[4] != "comments" {
-		return "", 0, false
-	}
-	commentID, err := strconv.ParseInt(parts[5], 10, 64)
-	if err != nil || commentID < 1 {
-		return "", 0, false
-	}
-	repository := parts[1] + "/" + parts[2]
-	if ValidateRepository(repository) != nil {
-		return "", 0, false
-	}
-	return repository, commentID, true
-}
-
-func stripAPIPrefix(parts []string) []string {
-	if len(parts) > 0 && parts[0] == "api" {
-		parts = parts[1:]
-		if len(parts) > 0 && strings.HasPrefix(parts[0], "v") {
-			parts = parts[1:]
+	if u.Fragment != "" {
+		anchor := reviewCommentAnchor.FindStringSubmatch(u.Fragment)
+		if anchor == nil {
+			return Target{}, fmt.Errorf("URL fragment must identify a review comment: %q", value)
+		}
+		target.CommentID, err = strconv.ParseInt(anchor[1], 10, 64)
+		if err != nil || target.CommentID < 1 {
+			return Target{}, fmt.Errorf("invalid review comment ID in %q", value)
 		}
 	}
-	return parts
-}
-
-func splitPath(value string) []string {
-	parts := strings.Split(strings.Trim(value, "/"), "/")
-	if len(parts) == 1 && parts[0] == "" {
-		return nil
-	}
-	return parts
+	return target, nil
 }

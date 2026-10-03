@@ -57,78 +57,66 @@ func Execute(ctx context.Context, writer io.Writer, client gh.Client, options Op
 		return fmt.Errorf("unsupported output format %q", options.Format)
 	}
 
-	repository, pullRequest, selectedCommentID, err := resolveTarget(ctx, client, options)
+	selector, err := resolveTarget(ctx, client, options)
 	if err != nil {
 		return err
 	}
-	threads, err := client.ListReviewThreads(ctx, repository, pullRequest)
+	comments, err := client.ListReviewComments(ctx, selector.Repository, selector.PullRequest)
 	if err != nil {
 		return err
 	}
 	items := make([]output.Item, 0)
 	itemIndexes := make(map[string]int)
-	selectedCommentFound := selectedCommentID == 0
-	for _, thread := range threads {
-		for _, comment := range thread.Comments.Nodes {
-			commentID, err := comment.NumericID()
-			if err != nil {
-				return fmt.Errorf("read review comment ID: %w", err)
-			}
-			if selectedCommentID != 0 && commentID != selectedCommentID {
-				continue
-			}
-			selectedCommentFound = true
-			if selectedCommentID == 0 && !options.All && (thread.IsResolved || thread.IsOutdated) {
-				continue
-			}
-			commentTarget, ok := commentTargetFor(thread, comment)
-			if !ok {
-				continue
-			}
-			target, err := diff.ExtractTargetLines(commentTarget)
-			if errors.Is(err, diff.ErrNoTarget) {
-				continue
-			}
-			if err != nil {
-				return fmt.Errorf("extract review comment %d: %w", commentID, err)
-			}
-			path := comment.Path
-			if path == "" {
-				path = thread.Path
-			}
-			key := strings.Join([]string{
-				path,
-				fmt.Sprint(target.StartLine),
-				fmt.Sprint(target.EndLine),
-				target.Side,
-				strings.Join(target.Lines, "\x00"),
-			}, "\x00")
-			metadata := output.ReviewComment{
-				ID:       commentID,
-				ThreadID: thread.ID,
-				URL:      comment.URL,
-				Path:     path,
-				Line:     target.StartLine,
-				Body:     comment.Body,
-				Resolved: thread.IsResolved,
-				Outdated: thread.IsOutdated,
-			}
-			if index, ok := itemIndexes[key]; ok {
-				items[index].Reviews = append(items[index].Reviews, comment.Body)
-				items[index].Comments = append(items[index].Comments, metadata)
-				continue
-			}
-			itemIndexes[key] = len(items)
-			items = append(items, output.Item{
-				Path:     path,
-				Reviews:  []string{comment.Body},
-				Comments: []output.ReviewComment{metadata},
-				Target:   target,
-			})
+	selectedCommentFound := selector.CommentID == 0
+	for _, comment := range comments {
+		if selector.CommentID != 0 && comment.ID != selector.CommentID {
+			continue
 		}
+		selectedCommentFound = true
+		if selector.CommentID == 0 && !options.All && (comment.Resolved || comment.Outdated) {
+			continue
+		}
+		target, err := diff.ExtractTargetLines(diff.Comment{
+			DiffHunk:  comment.DiffHunk,
+			StartLine: comment.StartLine,
+			Line:      comment.Line,
+			StartSide: comment.StartSide,
+			Side:      comment.Side,
+		})
+		if errors.Is(err, diff.ErrNoTarget) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("extract comment %d: %w", comment.ID, err)
+		}
+		key := strings.Join([]string{
+			comment.Path,
+			fmt.Sprint(target.StartLine),
+			fmt.Sprint(target.EndLine),
+			target.Side,
+			strings.Join(target.Lines, "\x00"),
+		}, "\x00")
+		metadata := output.ReviewComment{
+			ID:       comment.ID,
+			ThreadID: comment.ThreadID,
+			URL:      comment.URL,
+			Path:     comment.Path,
+			Line:     target.StartLine,
+			Body:     comment.Body,
+			Resolved: comment.Resolved,
+			Outdated: comment.Outdated,
+		}
+		index, ok := itemIndexes[key]
+		if !ok {
+			index = len(items)
+			itemIndexes[key] = index
+			items = append(items, output.Item{Path: comment.Path, Target: target})
+		}
+		items[index].Reviews = append(items[index].Reviews, comment.Body)
+		items[index].Comments = append(items[index].Comments, metadata)
 	}
 	if !selectedCommentFound {
-		return fmt.Errorf("review comment %d was not found in %s pull request #%d", selectedCommentID, repository, pullRequest)
+		return fmt.Errorf("review comment %d was not found in %s pull request #%d", selector.CommentID, selector.Repository, selector.PullRequest)
 	}
 
 	if options.Format == "json" {
@@ -137,98 +125,36 @@ func Execute(ctx context.Context, writer io.Writer, client gh.Client, options Op
 	return output.LLM(writer, items)
 }
 
-func resolveTarget(ctx context.Context, client gh.Client, options Options) (string, int, int64, error) {
-	if options.Target != "" && options.PullRequest != 0 {
-		return "", 0, 0, errors.New("specify either a target or pull request number, not both")
-	}
-	if options.Target == "" && options.PullRequest == 0 {
-		pullRequest, err := client.CurrentPullRequest(ctx, options.Repository)
-		if err != nil {
-			return "", 0, 0, err
-		}
-		return pullRequest.Repository, pullRequest.Number, 0, nil
-	}
-
-	selector := gh.Target{PullRequest: options.PullRequest}
-	if options.Target != "" {
-		var err error
-		selector, err = gh.ParseTarget(options.Target)
-		if err != nil {
-			return "", 0, 0, err
-		}
-	}
-	repository := selector.Repository
-	if repository == "" {
-		repository = options.Repository
-	}
-	if repository == "" {
-		var err error
-		repository, err = client.CurrentRepository(ctx)
-		if err != nil {
-			return "", 0, 0, fmt.Errorf("resolve current repository: %w", err)
-		}
-	}
-	normalizedRepository, err := gh.NormalizeRepository(repository)
-	if err != nil {
-		return "", 0, 0, err
-	}
-	if selector.CommentAPIURL {
-		selector.PullRequest, err = client.PullRequestForComment(ctx, normalizedRepository, selector.CommentID)
-		if err != nil {
-			return "", 0, 0, err
-		}
-	}
-	if selector.PullRequest < 1 {
-		return "", 0, 0, errors.New("pull request number must be greater than zero")
-	}
-	return normalizedRepository, selector.PullRequest, selector.CommentID, nil
-}
-
-func commentTargetFor(thread gh.ReviewThread, comment gh.ReviewComment) (diff.Comment, bool) {
-	// diffHunk uses the comment's original commit coordinates even when newer
-	// commits have moved the line without making the thread outdated.
-	line := firstInt(comment.OriginalLine, thread.OriginalLine, comment.Line, thread.Line)
-	startLine := firstInt(comment.OriginalStartLine, thread.OriginalStartLine, comment.StartLine, thread.StartLine)
-	if line == nil {
-		return diff.Comment{}, false
-	}
-	side := thread.DiffSide
-	if side == "" {
-		return diff.Comment{}, false
-	}
-	startSide := firstString(thread.StartDiffSide, side)
-	hunk := comment.DiffHunk
-	if hunk == "" {
-		for _, candidate := range thread.Comments.Nodes {
-			if candidate.DiffHunk != "" {
-				hunk = candidate.DiffHunk
-				break
-			}
-		}
-	}
-	return diff.Comment{
-		DiffHunk:  hunk,
-		StartLine: startLine,
-		Line:      line,
-		StartSide: startSide,
-		Side:      side,
-	}, true
-}
-
-func firstInt(values ...*int) *int {
-	for _, value := range values {
-		if value != nil {
-			return value
-		}
-	}
-	return nil
-}
-
-func firstString(values ...string) string {
-	for _, value := range values {
+func resolveTarget(ctx context.Context, client gh.Client, options Options) (gh.Target, error) {
+	value := options.Target
+	if options.PullRequest != 0 {
 		if value != "" {
-			return value
+			return gh.Target{}, errors.New("specify either a target or pull request number, not both")
+		}
+		value = fmt.Sprint(options.PullRequest)
+	}
+	if value == "" {
+		return client.CurrentPullRequest(ctx, options.Repository)
+	}
+	target, err := gh.ParseTarget(value)
+	if err != nil {
+		return target, err
+	}
+	if target.Repository == "" {
+		target.Repository = options.Repository
+	}
+	if target.Repository == "" {
+		target.Repository, err = client.CurrentRepository(ctx)
+		if err != nil {
+			return target, err
 		}
 	}
-	return ""
+	target.Repository, err = gh.NormalizeRepository(target.Repository)
+	if err != nil {
+		return target, err
+	}
+	if target.PullRequest == 0 {
+		target.PullRequest, err = client.PullRequestForComment(ctx, target.Repository, target.CommentID)
+	}
+	return target, err
 }
