@@ -16,15 +16,14 @@ func TestKubernetesPullRequestReviewComments(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListReviewComments() error = %v", err)
 	}
-	if len(comments) < 40 {
-		t.Fatalf("review comments = %d, want at least 40", len(comments))
-	}
-
 	lineComments := 0
 	for _, comment := range comments {
 		if comment.Line != nil {
 			lineComments++
 		}
+	}
+	if len(comments) < 40 {
+		t.Fatalf("review comments = %d, want at least 40", len(comments))
 	}
 	if lineComments < 10 {
 		t.Fatalf("line-targeted review comments = %d, want at least 10", lineComments)
@@ -35,6 +34,7 @@ func TestKubernetesPullRequestReviewComments(t *testing.T) {
 		Repository:  "kubernetes/kubernetes",
 		Format:      "json",
 		PullRequest: 138132,
+		All:         true,
 	})
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
