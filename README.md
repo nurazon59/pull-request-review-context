@@ -25,14 +25,14 @@ go run ./cmd/pull-request-review-context https://github.com/OWNER/REPOSITORY/pul
 go run ./cmd/pull-request-review-context --repository OWNER/REPOSITORY 123
 ```
 
-review comment URL を指定すると、そのコメントだけを取得します。`--all` は resolved / outdated の thread も含めます。
+review comment URL を指定すると、resolved / outdated 状態に関係なく、そのコメントだけを取得します。thread へのリンクも、アンカーが指すコメントだけを取得します。`--all` は PR 全体から resolved / outdated の thread も含めます。
 
 ```bash
 go run ./cmd/pull-request-review-context https://github.com/OWNER/REPOSITORY/pull/123#discussion_r456
 go run ./cmd/pull-request-review-context --all
 ```
 
-標準出力は、ファイル名・行番号・対象コード行・レビュー本文です。既定では resolved / outdated thread を除外します。
+標準出力は、ファイル名・行番号・対象コード行・レビュー本文です。PR 全体の取得では、既定で resolved / outdated thread を除外します。行番号とコードはコメント作成時の diff hunk に基づきます。
 
 ```text
 file: internal/example.go
@@ -54,7 +54,9 @@ go run ./cmd/pull-request-review-context --format json
 JSON の各項目には `comments` として comment ID、thread ID、URL、パス、行、本文、resolved / outdated 状態も含まれます。
 対象コード行を特定できないコメントは出力しません。
 
-未解決コメントがない場合は空出力で終了コード `0` です。current branch に open PR がない、指定した comment が見つからない、または GitHub CLI/API に失敗した場合は標準エラーにエラーを出し、終了コード `1` になります。
+未解決コメントがない場合は LLM 形式では空出力、JSON 形式では `[]` を出力して終了コード `0` です。current branch に open PR がない、指定した comment が見つからない、または GitHub CLI/API に失敗した場合は標準エラーにエラーを出し、終了コード `1` になります。
+
+`--repository` 付きの自動解決では、現在のブランチ名で open PR を検索します。複数の fork が同じブランチ名を使っていて候補が複数ある場合や detached HEAD の場合は、PR 番号または URL を指定してください。URL のホストは `github.com` / `api.github.com` に対応しています。
 
 ## Codex skill
 

@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-var reviewCommentAnchor = regexp.MustCompile(`^(?:discussion_r|discussion-)([0-9]+)$`)
+var reviewCommentAnchor = regexp.MustCompile(`^(?:discussion_r|discussion-|discussion-diff-)([0-9]+)$`)
 
 // Target identifies a pull request, optionally narrowed to one inline review comment.
 type Target struct {
@@ -28,6 +28,9 @@ func ParseTarget(value string) (Target, error) {
 	parsed, err := url.Parse(value)
 	if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.Host == "" {
 		return Target{}, fmt.Errorf("target must be a pull request number or GitHub pull request/comment URL: %q", value)
+	}
+	if parsed.User != nil || (!strings.EqualFold(parsed.Host, "github.com") && !strings.EqualFold(parsed.Host, "api.github.com")) {
+		return Target{}, fmt.Errorf("target URL must use github.com or api.github.com: %q", value)
 	}
 	parts := splitPath(parsed.Path)
 	apiParts := stripAPIPrefix(parts)

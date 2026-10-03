@@ -145,24 +145,47 @@ func (c Client) CurrentRepository(ctx context.Context) (string, error) {
 }
 
 func (c Client) CurrentPullRequest(ctx context.Context, repository string) (PullRequest, error) {
+	type pullRequestResult struct {
+		Number int    `json:"number"`
+		State  string `json:"state"`
+		URL    string `json:"url"`
+	}
 	args := []string{"pr", "view", "--json", "number,state,url"}
 	if repository != "" {
 		normalizedRepository, err := NormalizeRepository(repository)
 		if err != nil {
 			return PullRequest{}, err
 		}
-		args = append(args, "--repo", normalizedRepository)
+		branchData, err := c.run(ctx, "git", "symbolic-ref", "--quiet", "--short", "HEAD")
+		if err != nil {
+			return PullRequest{}, fmt.Errorf("resolve current branch: %w", err)
+		}
+		branch := strings.TrimSpace(string(branchData))
+		if branch == "" {
+			return PullRequest{}, errors.New("current checkout has no branch")
+		}
+		// gh pr view requires a selector with --repo. Use --head so branch
+		// names such as "123" cannot be mistaken for a pull request number.
+		args = []string{"pr", "list", "--repo", normalizedRepository, "--head", branch, "--state", "open", "--limit", "2", "--json", "number,state,url"}
 	}
 	data, err := c.run(ctx, "gh", args...)
 	if err != nil {
 		return PullRequest{}, fmt.Errorf("resolve current branch pull request: %w", err)
 	}
-	var result struct {
-		Number int    `json:"number"`
-		State  string `json:"state"`
-		URL    string `json:"url"`
-	}
-	if err := json.Unmarshal(data, &result); err != nil {
+	var result pullRequestResult
+	if repository != "" {
+		var results []pullRequestResult
+		if err := json.Unmarshal(data, &results); err != nil {
+			return PullRequest{}, fmt.Errorf("decode current branch pull requests: %w", err)
+		}
+		if len(results) == 0 {
+			return PullRequest{}, errors.New("current branch has no open pull request in the specified repository")
+		}
+		if len(results) > 1 {
+			return PullRequest{}, errors.New("current branch matches multiple open pull requests; specify a pull request number or URL")
+		}
+		result = results[0]
+	} else if err := json.Unmarshal(data, &result); err != nil {
 		return PullRequest{}, fmt.Errorf("decode current branch pull request: %w", err)
 	}
 	if result.Number < 1 {
@@ -245,7 +268,7 @@ func (c Client) reviewThreadPage(ctx context.Context, owner, name string, number
 		return reviewThreadPage{}, fmt.Errorf("pull request #%d was not found or is inaccessible in %s/%s", number, owner, name)
 	}
 	connection := response.Data.Repository.PullRequest.ReviewThreads
-	return reviewThreadPage{Nodes: connection.Nodes, PageInfo: connection.PageInfo}, nil
+	return reviewThreadPage(connection), nil
 }
 
 func (c Client) completeThreadComments(ctx context.Context, thread *ReviewThread) error {
@@ -309,7 +332,11 @@ func (c Client) graphQL(ctx context.Context, query string, variables map[string]
 	args := []string{"api", "graphql", "-f", "query=" + query}
 	for _, key := range []string{"owner", "name", "number", "id", "after"} {
 		if value, ok := variables[key]; ok {
-			args = append(args, "-F", key+"="+value)
+			flag := "-f"
+			if key == "number" {
+				flag = "-F"
+			}
+			args = append(args, flag, key+"="+value)
 		}
 	}
 	data, err := c.run(ctx, "gh", args...)
@@ -333,11 +360,14 @@ func NormalizeRepository(repository string) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("invalid repository: %w", err)
 		}
+		if parsed.User != nil || !strings.EqualFold(parsed.Host, "github.com") || (parsed.Scheme != "https" && parsed.Scheme != "http") {
+			return "", errors.New("repository URL must use github.com")
+		}
 		repository = strings.Trim(parsed.Path, "/")
 	}
 	repository = strings.TrimSuffix(repository, ".git")
 	parts := strings.Split(repository, "/")
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" || strings.Contains(parts[0], " ") || strings.Contains(parts[1], " ") {
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" || strings.ContainsAny(repository, " \t\r\n") {
 		return "", fmt.Errorf("repository must be in OWNER/REPOSITORY format: %q", repository)
 	}
 	return repository, nil

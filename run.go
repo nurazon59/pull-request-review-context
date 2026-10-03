@@ -27,7 +27,7 @@ type Options struct {
 type cliOptions struct {
 	Repository string           `name:"repository" short:"R" help:"GitHub repository in OWNER/REPOSITORY format." env:"GITHUB_REPOSITORY"`
 	Format     string           `name:"format" help:"Output format." enum:"llm,json" default:"llm"`
-	Target     string           `arg:"" optional:"" name:"pull-request-or-comment-url" help:"Pull request number, pull request URL, or inline review comment URL. Defaults to the current branch's open pull request."`
+	Target     string           `arg:"" optional:"" name:"pull-request-or-comment-url" help:"Pull request number, pull request URL, or inline review comment URL (any status). Defaults to the current branch's open pull request."`
 	All        bool             `name:"all" help:"Include resolved and outdated review threads."`
 	Version    kong.VersionFlag `name:"version" help:"Print version information and quit."`
 }
@@ -78,7 +78,7 @@ func Execute(ctx context.Context, writer io.Writer, client gh.Client, options Op
 				continue
 			}
 			selectedCommentFound = true
-			if !options.All && (thread.IsResolved || thread.IsOutdated) {
+			if selectedCommentID == 0 && !options.All && (thread.IsResolved || thread.IsOutdated) {
 				continue
 			}
 			commentTarget, ok := commentTargetFor(thread, comment)
@@ -185,12 +185,10 @@ func resolveTarget(ctx context.Context, client gh.Client, options Options) (stri
 }
 
 func commentTargetFor(thread gh.ReviewThread, comment gh.ReviewComment) (diff.Comment, bool) {
-	line := firstInt(comment.Line, thread.Line, comment.OriginalLine, thread.OriginalLine)
-	startLine := firstInt(comment.StartLine, thread.StartLine, comment.OriginalStartLine, thread.OriginalStartLine)
-	if thread.IsOutdated {
-		line = firstInt(comment.OriginalLine, thread.OriginalLine, comment.Line, thread.Line)
-		startLine = firstInt(comment.OriginalStartLine, thread.OriginalStartLine, comment.StartLine, thread.StartLine)
-	}
+	// diffHunk uses the comment's original commit coordinates even when newer
+	// commits have moved the line without making the thread outdated.
+	line := firstInt(comment.OriginalLine, thread.OriginalLine, comment.Line, thread.Line)
+	startLine := firstInt(comment.OriginalStartLine, thread.OriginalStartLine, comment.StartLine, thread.StartLine)
 	if line == nil {
 		return diff.Comment{}, false
 	}

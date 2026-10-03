@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -141,19 +142,39 @@ func TestExecuteAPICommentURLResolvesPullRequest(t *testing.T) {
 	}
 }
 
-func TestExecuteResolvedSelectedCommentIsEmptyByDefault(t *testing.T) {
+func TestExecuteExplicitCommentURLIncludesResolvedOrOutdated(t *testing.T) {
 	runner := func(_ context.Context, _ string, args ...string) ([]byte, error) {
 		return []byte(reviewThreadsResponse), nil
 	}
-	var buffer bytes.Buffer
-	err := Execute(context.Background(), &buffer, gh.NewClientWithRunner(runner), Options{
-		Target: "https://github.com/upstream/project/pull/42#discussion_r102",
-	})
-	if err != nil {
-		t.Fatalf("Execute() error = %v", err)
+	for _, test := range []struct{ id, body, status string }{
+		{"102", "解決済み", "resolved"},
+		{"103", "古い指摘", "outdated"},
+	} {
+		t.Run(test.status, func(t *testing.T) {
+			var buffer bytes.Buffer
+			err := Execute(context.Background(), &buffer, gh.NewClientWithRunner(runner), Options{
+				Target: "https://github.com/upstream/project/pull/42#discussion_r" + test.id,
+			})
+			if err != nil {
+				t.Fatalf("Execute() error = %v", err)
+			}
+			if !strings.Contains(buffer.String(), test.body) || !strings.Contains(buffer.String(), "review status: "+test.status) || strings.Contains(buffer.String(), "未解決の指摘") {
+				t.Fatalf("output = %q, want only selected %s comment", buffer.String(), test.status)
+			}
+		})
 	}
-	if buffer.Len() != 0 {
-		t.Fatalf("output = %q, want empty output for a resolved comment", buffer.String())
+}
+
+func TestExecuteMovedCurrentCommentUsesOriginalHunkCoordinates(t *testing.T) {
+	response := `{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"THREAD","isResolved":false,"isOutdated":false,"path":"main.go","line":13,"originalLine":12,"diffSide":"RIGHT","comments":{"nodes":[{"fullDatabaseId":"101","body":"moved review","line":13,"originalLine":12,"diffHunk":"@@ -12,1 +12,2 @@\n-original\n+target\n+unrelated"}]}}]}}}}}`
+	runner := func(context.Context, string, ...string) ([]byte, error) { return []byte(response), nil }
+	var buffer bytes.Buffer
+	err := Execute(context.Background(), &buffer, gh.NewClientWithRunner(runner), Options{Target: "42", Repository: "owner/repository"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buffer.String(), "code:\ntarget\n") || strings.Contains(buffer.String(), "unrelated") {
+		t.Fatalf("output = %q, want the original target code", buffer.String())
 	}
 }
 
@@ -167,6 +188,25 @@ func TestExecuteReportsMissingSelectedComment(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "comment 999 was not found") {
 		t.Fatalf("Execute() error = %v, want missing comment error", err)
+	}
+}
+
+func TestExecutePaginationFailureProducesNoPartialOutput(t *testing.T) {
+	calls := 0
+	runner := func(context.Context, string, ...string) ([]byte, error) {
+		calls++
+		if calls > 1 {
+			return nil, errors.New("GitHub API unavailable")
+		}
+		return []byte(strings.ReplaceAll(reviewThreadsResponse, `"hasNextPage":false,"endCursor":null`, `"hasNextPage":true,"endCursor":"next"`)), nil
+	}
+	var buffer bytes.Buffer
+	err := Execute(context.Background(), &buffer, gh.NewClientWithRunner(runner), Options{Target: "42", Repository: "owner/project"})
+	if err == nil || !strings.Contains(err.Error(), "GitHub API unavailable") {
+		t.Fatalf("error = %v, want API failure", err)
+	}
+	if buffer.Len() != 0 {
+		t.Fatalf("partial output = %q, want empty stdout on fetch failure", buffer.String())
 	}
 }
 

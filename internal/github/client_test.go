@@ -47,10 +47,10 @@ func TestListReviewThreadsPaginatesThreadsAndComments(t *testing.T) {
 	if !strings.Contains(first, "fullDatabaseId") {
 		t.Fatalf("query does not request the 64-bit comment ID: %s", first)
 	}
-	if !reflect.DeepEqual(calls[1][len(calls[1])-2:], []string{"-F", "after=comment-cursor"}) {
+	if !reflect.DeepEqual(calls[1][len(calls[1])-2:], []string{"-f", "after=comment-cursor"}) {
 		t.Fatalf("comment pagination arguments = %#v", calls[1])
 	}
-	if !reflect.DeepEqual(calls[2][len(calls[2])-2:], []string{"-F", "after=thread-cursor"}) {
+	if !reflect.DeepEqual(calls[2][len(calls[2])-2:], []string{"-f", "after=thread-cursor"}) {
 		t.Fatalf("thread pagination arguments = %#v", calls[2])
 	}
 	if !strings.Contains(strings.Join(calls[0], " "), "owner=owner") || !strings.Contains(strings.Join(calls[0], " "), "name=repository") {
@@ -79,20 +79,26 @@ func TestCurrentRepository(t *testing.T) {
 	}
 }
 
-func TestCurrentPullRequestUsesBaseRepositoryForFork(t *testing.T) {
+func TestCurrentPullRequestWithRepositoryUsesCurrentBranch(t *testing.T) {
 	var gotArgs []string
 	runner := func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name == "git" {
+			if !reflect.DeepEqual(args, []string{"symbolic-ref", "--quiet", "--short", "HEAD"}) {
+				t.Fatalf("branch lookup arguments = %#v", args)
+			}
+			return []byte("123\n"), nil
+		}
 		gotArgs = args
-		return []byte(`{"number":42,"state":"OPEN","url":"https://github.com/upstream/project/pull/42"}`), nil
+		return []byte(`[{"number":42,"state":"OPEN","url":"https://github.com/upstream/project/pull/42"}]`), nil
 	}
-	pullRequest, err := NewClientWithRunner(runner).CurrentPullRequest(context.Background(), "fork/project")
+	pullRequest, err := NewClientWithRunner(runner).CurrentPullRequest(context.Background(), "upstream/project")
 	if err != nil {
 		t.Fatalf("CurrentPullRequest() error = %v", err)
 	}
 	if pullRequest.Number != 42 || pullRequest.Repository != "upstream/project" {
 		t.Fatalf("pull request = %#v", pullRequest)
 	}
-	wantArgs := []string{"pr", "view", "--json", "number,state,url", "--repo", "fork/project"}
+	wantArgs := []string{"pr", "list", "--repo", "upstream/project", "--head", "123", "--state", "open", "--limit", "2", "--json", "number,state,url"}
 	if !reflect.DeepEqual(gotArgs, wantArgs) {
 		t.Fatalf("arguments = %#v, want %#v", gotArgs, wantArgs)
 	}
@@ -159,6 +165,8 @@ func TestValidateRepository(t *testing.T) {
 		"github URL":           {repository: "https://github.com/owner/repository"},
 		"missing repository":   {repository: "owner", wantErr: true},
 		"empty owner":          {repository: "/repository", wantErr: true},
+		"unsupported host":     {repository: "https://example.com/owner/repository", wantErr: true},
+		"whitespace":           {repository: "owner/repository\n", wantErr: true},
 	}
 
 	for name, test := range tests {
@@ -184,6 +192,10 @@ func TestParseTarget(t *testing.T) {
 		{input: "https://github.com/owner/repository/pull/42", wantRepo: "owner/repository", wantPR: 42},
 		{input: "https://github.com/owner/repository/pull/42#discussion_r123", wantRepo: "owner/repository", wantPR: 42, wantID: 123},
 		{input: "https://github.com/owner/repository/pull/42#discussion-123", wantRepo: "owner/repository", wantPR: 42, wantID: 123},
+		{input: "https://github.com/owner/repository/pull/42#discussion-diff-123", wantRepo: "owner/repository", wantPR: 42, wantID: 123},
+		{input: "https://github.com/owner/repository/pull/42/files#discussion_r123", wantRepo: "owner/repository", wantPR: 42, wantID: 123},
+		{input: "https://example.com/owner/repository/pull/42", wantErr: true},
+		{input: "https://github.com:123/owner/repository/pull/42", wantErr: true},
 		{input: "https://api.github.com/repos/owner/repository/pulls/42", wantRepo: "owner/repository", wantPR: 42},
 		{input: "https://api.github.com/repos/owner/repository/pulls/comments/123", wantRepo: "owner/repository", wantID: 123, wantAPIURL: true},
 		{input: "https://github.com/owner/repository/issues/42", wantErr: true},
@@ -216,5 +228,82 @@ func TestGraphQLQueryPaginatesAfterCursor(t *testing.T) {
 	_, err := NewClientWithRunner(runner).reviewThreadPage(context.Background(), "owner", "repository", 42, "cursor-2")
 	if err != nil {
 		t.Fatalf("reviewThreadPage() error = %v", err)
+	}
+}
+
+func TestCurrentPullRequestWithRepositoryRejectsMissingOrAmbiguousPR(t *testing.T) {
+	for _, test := range []struct{ name, response, wantErr string }{
+		{"no open PR", `[]`, "no open pull request"},
+		{"multiple forks", `[{"number":1},{"number":2}]`, "multiple open pull requests"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			runner := func(_ context.Context, name string, _ ...string) ([]byte, error) {
+				if name == "git" {
+					return []byte("feature\n"), nil
+				}
+				return []byte(test.response), nil
+			}
+			_, err := NewClientWithRunner(runner).CurrentPullRequest(context.Background(), "upstream/project")
+			if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+				t.Fatalf("error = %v, want %q", err, test.wantErr)
+			}
+		})
+	}
+}
+
+func TestCurrentPullRequestWithRepositoryRejectsDetachedHEAD(t *testing.T) {
+	runner := func(_ context.Context, name string, _ ...string) ([]byte, error) {
+		if name != "git" {
+			t.Fatal("must not search PRs without a branch")
+		}
+		return nil, fmt.Errorf("detached HEAD")
+	}
+	_, err := NewClientWithRunner(runner).CurrentPullRequest(context.Background(), "upstream/project")
+	if err == nil || !strings.Contains(err.Error(), "resolve current branch") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestGraphQLPreservesStringVariables(t *testing.T) {
+	runner := func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		want := []string{"api", "graphql", "-f", "query=query", "-f", "owner=123", "-f", "name=true", "-F", "number=42", "-f", "id=null", "-f", "after=@cursor"}
+		if !reflect.DeepEqual(args, want) {
+			t.Fatalf("args = %#v, want %#v", args, want)
+		}
+		return []byte(`{}`), nil
+	}
+	_, err := NewClientWithRunner(runner).graphQL(context.Background(), "query", map[string]string{"owner": "123", "name": "true", "number": "42", "id": "null", "after": "@cursor"})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPaginationRejectsMissingOrRepeatedCursors(t *testing.T) {
+	for _, connection := range []string{"threads", "comments"} {
+		for _, cursor := range []string{"", "repeated"} {
+			t.Run(connection+"/"+cursor, func(t *testing.T) {
+				pageInfo := fmt.Sprintf(`{"hasNextPage":true,"endCursor":%q}`, cursor)
+				response := fmt.Sprintf(`{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[],"pageInfo":%s}}}}}`, pageInfo)
+				if connection == "comments" {
+					response = fmt.Sprintf(`{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"THREAD","comments":{"nodes":[],"pageInfo":%s}}]}}},"node":{"comments":{"nodes":[],"pageInfo":%s}}}}`, pageInfo, pageInfo)
+				}
+				calls := 0
+				runner := func(context.Context, string, ...string) ([]byte, error) {
+					calls++
+					if calls > 2 {
+						t.Fatal("pagination must terminate on invalid cursors")
+					}
+					return []byte(response), nil
+				}
+				_, err := NewClientWithRunner(runner).ListReviewThreads(context.Background(), "owner/project", 42)
+				wantErr := "repeated"
+				if cursor == "" {
+					wantErr = "without an endCursor"
+				}
+				if err == nil || !strings.Contains(err.Error(), wantErr) {
+					t.Fatalf("error = %v, want %s", err, wantErr)
+				}
+			})
+		}
 	}
 }

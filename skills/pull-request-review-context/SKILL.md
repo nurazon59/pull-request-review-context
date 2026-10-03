@@ -10,7 +10,7 @@ Use `pull-request-review-context` to provide an LLM with review comments and the
 ## Workflow
 
 1. If the current checkout has an open pull request for its branch, run the command without a target. It resolves that PR and uses its base repository, including when the head branch is a fork.
-2. For another pull request, pass its number or URL. For one inline review comment, pass its comment URL, such as `https://github.com/OWNER/REPOSITORY/pull/123#discussion_r456`.
+2. For another pull request, pass its number or URL. For one inline review comment, pass its comment URL, such as `https://github.com/OWNER/REPOSITORY/pull/123#discussion_r456`. Explicit comment links include the selected comment regardless of resolved or outdated state. A thread link selects the comment identified by its anchor. Use URLs on `github.com` or `api.github.com`.
 3. Confirm `gh auth status` if GitHub access fails. Do not expose tokens.
 4. Prefer the installed binary:
 
@@ -28,7 +28,7 @@ Use `pull-request-review-context` to provide an LLM with review comments and the
    go run ./cmd/pull-request-review-context
    ```
 
-5. Pass the labeled output directly as LLM context. The default includes unresolved, current review threads and excludes resolved or outdated threads. It omits comments without a recoverable target line.
+5. Pass the labeled output directly as LLM context. PR-wide retrieval defaults to unresolved, current review threads and excludes resolved or outdated threads. It omits comments without a recoverable target line. Code and line numbers use the comment's original diff hunk coordinates.
 6. Use `--format json` only when another program must parse the result. JSON includes comment and thread IDs, URL, path, line, body, resolved state, and outdated state. Keep the default labeled format for human or LLM review.
 
 ## Output handling
@@ -37,5 +37,5 @@ Use `pull-request-review-context` to provide an LLM with review comments and the
 - Do not add the full pull request body, full diff, reviewer metadata, or unrelated files unless the user asks for them.
 - Multiple comments on the same target are grouped by the CLI; retain each `review` section.
 - Report an empty result as “no line-targeted review comments found,” not as an error.
-- When `--all` is used, preserve the `review status` label for resolved or outdated comments.
+- Preserve the `review status` label for resolved or outdated comments, including those selected by URL.
 - If the command fails, inspect current-branch PR resolution, the target URL or number, `gh` authentication, and binary availability before trying another command.
